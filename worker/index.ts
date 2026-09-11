@@ -35,8 +35,8 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/generate-theme") {
-      return handleGenerateTheme(request, env);
-    }
+  return handleGenerateOpenAITheme(request, env);
+}
 
     if (url.pathname === "/api/generate-theme_openai") {
       return handleGenerateOpenAITheme(request, env);
