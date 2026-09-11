@@ -338,9 +338,9 @@ export async function handleGenerateOpenAITheme(request: Request, env: WorkerEnv
             return Response.json({ error: 'Missing lyricsText' }, { status: 400 });
         }
 
-        const apiKey = env.OPENAI_API_KEY || 'af5838d107954b51846faeb63f681b07.jCLisvqbfyFlTSC6';
-        const apiUrl = normalizeOpenAIChatCompletionsUrl(env.OPENAI_API_URL || 'https://open.bigmodel.cn/api/paas/v4');
-        const model = resolveOpenAICompatibleModel(apiUrl, env.OPENAI_API_MODEL || 'glm-4-flash');
+        const apiKey = env.OPENAI_API_KEY;
+        const apiUrl = normalizeOpenAIChatCompletionsUrl(env.OPENAI_API_URL);
+        const model = resolveOpenAICompatibleModel(apiUrl, env.OPENAI_API_MODEL);
         const configuredTemperature = Number.parseFloat(env.OPENAI_API_TEMPERATURE?.trim() || '');
         const temperature = Number.isFinite(configuredTemperature) && configuredTemperature >= 0 && configuredTemperature <= 2
             ? configuredTemperature
