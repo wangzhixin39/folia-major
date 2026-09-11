@@ -8,14 +8,6 @@
     "process.env.JEST_WORKER_ID": "undefined",
     "process.env.LOG_LEVEL": "undefined"
   },
-"vars": {
-  "VITE_AI_PROVIDER": "openai",
-  "VITE_OPENAI_API_KEY": "8064816ca597442095e9b165065e84bc.CWVtqYT16GMgppfk",
-  "VITE_OPENAI_API_URL": "https://open.bigmodel.cn/api/paas/v4",
-  "VITE_OPENAI_API_MODEL": "glm-4.7-flash",
-  "VITE_NETEASE_API_BASE": "https://api.kirasite.dpdns.org",
-  "VITE_QQ_API_BASE": "/api/qq"
-},
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
