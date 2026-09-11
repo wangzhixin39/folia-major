@@ -338,7 +338,7 @@ export async function handleGenerateOpenAITheme(request: Request, env: WorkerEnv
             return Response.json({ error: 'Missing lyricsText' }, { status: 400 });
         }
 
-        const apiKey = env.OPENAI_API_KEY || '5d64e62039ac427dbcd5a1c9a2c925c4.s9nHM3Gqe7CTR0SV';
+        const apiKey = env.OPENAI_API_KEY;
         const apiUrl = normalizeOpenAIChatCompletionsUrl(env.OPENAI_API_URL);
         const model = resolveOpenAICompatibleModel(apiUrl, env.OPENAI_API_MODEL);
         const configuredTemperature = Number.parseFloat(env.OPENAI_API_TEMPERATURE?.trim() || '');
