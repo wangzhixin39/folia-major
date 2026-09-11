@@ -8,6 +8,11 @@
     "process.env.JEST_WORKER_ID": "undefined",
     "process.env.LOG_LEVEL": "undefined"
   },
+"vars": {
+  "OPENAI_API_KEY": "8064816ca597442095e9b165065e84bc.CWVtqYT16GMgppfk",
+  "OPENAI_API_URL": "https://open.bigmodel.cn/api/paas/v4",
+  "OPENAI_API_MODEL": "glm-4.7-flash"
+},
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
