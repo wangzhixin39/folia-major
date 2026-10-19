@@ -3,7 +3,7 @@
 // layer below the desktop icons, forwards desktop mouse input (move + left button) via Raw
 // Input, and keeps the session alive across explorer restarts. Protocol: JSONL events on
 // stdout, one-line commands on stdin (`detach`), consumed by
-// electron/windowsWallpaperController.cjs. Implementation provenance per module is noted in
+// electron/wallpaper/windowsWallpaperController.cjs. Implementation provenance per module is noted in
 // each file header; overall licensing is AGPL-3.0 (same as Folia).
 
 mod cli;
@@ -26,10 +26,10 @@ fn main() {
     match cli::parse(&args) {
         Ok(command) => run(command),
         Err(message) => {
-        eprintln!("usage: folia-wallpaper-helper attach --hwnd <n> [--forward-mouse] [--zguard]");
-        eprintln!("       folia-wallpaper-helper move --hwnd <n>");
-        eprintln!("       folia-wallpaper-helper detach --hwnd <n>");
-        eprintln!("       folia-wallpaper-helper refresh");
+            eprintln!("usage: folia-wallpaper-helper attach --hwnd <n> [--forward-mouse] [--zguard]");
+            eprintln!("       folia-wallpaper-helper move --hwnd <n>");
+            eprintln!("       folia-wallpaper-helper detach --hwnd <n>");
+            eprintln!("       folia-wallpaper-helper refresh");
             eprintln!("error: {message}");
             std::process::exit(2);
         }
@@ -59,8 +59,17 @@ use windows::Win32::Foundation::HWND;
 pub(crate) static DETACH_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(windows)]
+unsafe fn set_process_dpi_awareness() {
+    use windows::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+}
+
+#[cfg(windows)]
 fn run_windows(command: Command) {
     unsafe {
+        set_process_dpi_awareness();
         match command {
             Command::Move { hwnd } => {
                 attach::reassert_geometry(HWND(hwnd as _));

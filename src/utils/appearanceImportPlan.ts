@@ -17,9 +17,9 @@ import type { UrlBackgroundItem } from '../types';
 // auto-switch value can also flip "prefer custom theme" — a setting that is not in the config at
 // all and would otherwise change with no warning.
 
-export type ImportGroup = 'theme' | 'visualizer' | 'fonts' | 'background' | 'songTheme' | 'trackCard';
+export type ImportGroup = 'theme' | 'visualizer' | 'fonts' | 'background' | 'songTheme' | 'trackCard' | 'libraryWall';
 
-export const IMPORT_GROUPS: ImportGroup[] = ['theme', 'visualizer', 'fonts', 'background', 'songTheme', 'trackCard'];
+export const IMPORT_GROUPS: ImportGroup[] = ['theme', 'visualizer', 'fonts', 'background', 'songTheme', 'trackCard', 'libraryWall'];
 
 export interface ImportChange {
     group: ImportGroup;
@@ -70,6 +70,7 @@ export const ACTIVATE_CUSTOM_THEME_KEY = 'activateCustomTheme';
 const FIELD_GROUPS: Record<string, ImportGroup> = {
     visualizerMode: 'visualizer',
     randomVisualizerModePerSong: 'visualizer',
+    randomVisualizerModes: 'visualizer',
     visualizerOpacity: 'visualizer',
     hidePlayerTranslationSubtitle: 'visualizer',
     showSubtitleTranslation: 'visualizer',
@@ -80,6 +81,8 @@ const FIELD_GROUPS: Record<string, ImportGroup> = {
     showHarmonySubtitle: 'visualizer',
     harmonySubtitleBackground: 'visualizer',
     visualizerTunings: 'visualizer',
+    // Frozen: the 13 lyric-style tunings below predate the visualizerTunings bundle, which carries any
+    // new style. Do not add a lyric style here.
     classicTuning: 'visualizer',
     cadenzaTuning: 'visualizer',
     partitaTuning: 'visualizer',
@@ -91,7 +94,10 @@ const FIELD_GROUPS: Record<string, ImportGroup> = {
     monetTuning: 'visualizer',
     pendoloTuning: 'visualizer',
     sonnetTuning: 'visualizer',
+    // 智能动感模式: one setting for every visualizer, so not inside any one mode's tuning bundle.
+    smartBeat: 'visualizer',
     temperaTuning: 'visualizer',
+    lumiereTuning: 'visualizer',
 
     lyricsFontStyle: 'fonts',
     lyricsFontScale: 'fonts',
@@ -118,6 +124,7 @@ const FIELD_GROUPS: Record<string, ImportGroup> = {
     monetBackgroundTuning: 'background',
     nomandBackgroundTuning: 'background',
     latentBackgroundTuning: 'background',
+    soraBackgroundTuning: 'background',
     urlBackgroundList: 'background',
     urlBackgroundSelectedId: 'background',
 
@@ -132,6 +139,15 @@ const FIELD_GROUPS: Record<string, ImportGroup> = {
     stageTrackPillMode: 'trackCard',
     stageTrackPillTimeoutSec: 'trackCard',
     stageTrackPillOnHome: 'trackCard',
+
+    // The bravais wall's collection stack edges. Its own group: it styles the library wall, not the
+    // picture or the card, and someone taking a look for its colours has a reason to leave it alone.
+    libraryWallStackEdges: 'libraryWall',
+    // The info strip's material and the picture behind the wall: same group, same reason.
+    libraryWallSeamClear: 'libraryWall',
+    libraryWallSeamStyle: 'libraryWall',
+    libraryWallBackdropLyrics: 'libraryWall',
+    libraryWallBackdropBlur: 'libraryWall',
 };
 
 // Fields the import applies only when the incoming value is truthy, so an incoming null means "the
@@ -149,6 +165,8 @@ const TRUTHY_GUARDED_FIELDS = new Set([
     'subtitleFontStyle',
     'subtitleFontFallbackFamilies',
     'visualizerTunings',
+    // Frozen: the 13 lyric-style tunings below predate the visualizerTunings bundle, which carries any
+    // new style. Do not add a lyric style here.
     'classicTuning',
     'cadenzaTuning',
     'partitaTuning',
@@ -160,19 +178,26 @@ const TRUTHY_GUARDED_FIELDS = new Set([
     'monetTuning',
     'pendoloTuning',
     'sonnetTuning',
+    'smartBeat',
     'temperaTuning',
+    'lumiereTuning',
     'monetBackgroundTuning',
     'nomandBackgroundTuning',
     'latentBackgroundTuning',
+    'soraBackgroundTuning',
     'urlBackgroundSelectedId',
     // applyImportedConfig only applies the card's mode for the three known values, all truthy
     // strings, so an absent one is skipped there the same as here.
     'stageTrackPillMode',
+    // applyImportedConfig only applies a known info strip preset, all of which are truthy strings.
+    'libraryWallSeamStyle',
 ]);
 
 // Per-renderer tunings the import skips whenever the visualizerTunings bundle is present. The three
 // background tunings are not in this set: they are applied unconditionally.
 const BUNDLED_TUNING_FIELDS = new Set([
+    // Frozen: the 13 lyric-style tunings below predate the visualizerTunings bundle, which carries any
+    // new style. Do not add a lyric style here.
     'classicTuning',
     'cadenzaTuning',
     'partitaTuning',
@@ -185,6 +210,7 @@ const BUNDLED_TUNING_FIELDS = new Set([
     'pendoloTuning',
     'sonnetTuning',
     'temperaTuning',
+    'lumiereTuning',
 ]);
 
 // Structural compare over the plain JSON the codec emits — enough for tunings and font arrays, and

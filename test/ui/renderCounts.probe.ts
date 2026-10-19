@@ -46,11 +46,14 @@ const show = (label: string, counts: Counts) => {
 const openApp = async (page: import('@playwright/test').Page, view: 'player' | 'home') => {
     await page.addInitScript(([version, guideKey, startView]) => {
         localStorage.clear();
+        localStorage.setItem('library_suite_prompt_seen', 'true');
         localStorage.setItem('i18nextLng', 'zh-CN');
         localStorage.setItem('open_player_on_launch', startView === 'player' ? 'true' : 'false');
         localStorage.setItem('visualizer_mode', 'classic');
         localStorage.setItem('static_mode', 'true');
         localStorage.setItem(guideKey, version);
+        // Armed from the first script so the mount itself is counted; see the wait after goto.
+        (window as unknown as { __renderCounts: Counts }).__renderCounts = {};
     }, [APP_VERSION, GUIDE_VERSION_STORAGE_KEY, view]);
     await page.route('**/__mock_netease__/**', async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
@@ -60,6 +63,12 @@ const openApp = async (page: import('@playwright/test').Page, view: 'player' | '
     // measurement window as renders that have nothing to do with the write being measured. None of
     // the writes here need a song: they are settings, and the point is which subtree reads them.
     await page.goto('/');
+    // The dev server hands each fresh page hundreds of modules, so App can take seconds to mount.
+    // Nothing renders before that, and `waitForQuiet` would read the gap as settled and let the
+    // mount and startup renders land in the control window. Wait for App's first render instead.
+    await page.waitForFunction(() => (
+        ((window as unknown as { __renderCounts: Counts }).__renderCounts.App ?? 0) > 0
+    ));
     await page.waitForTimeout(1500);
 };
 
@@ -208,6 +217,7 @@ test('a day/night switch reaches every surface', async ({ page }) => {
 const openWall = async (page: import('@playwright/test').Page) => {
     await page.addInitScript(([version, guideKey]) => {
         localStorage.clear();
+        localStorage.setItem('library_suite_prompt_seen', 'true');
         localStorage.setItem('i18nextLng', 'en');
         localStorage.setItem('static_mode', 'true');
         localStorage.setItem(guideKey, version);

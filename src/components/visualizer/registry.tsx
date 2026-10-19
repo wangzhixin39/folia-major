@@ -8,9 +8,7 @@ import {
 export type {
     VisualizerRegistryEntry,
     VisualizerSettingsPanelProps,
-    VisualizerSettingsResetProps,
     VisualizerSharedProps,
-    VisualizerTuningKind,
 } from './definition';
 
 // Central mode registry. Entries are discovered from each visualizer's local entry file.
@@ -77,11 +75,12 @@ export const getVisualizerScopedSeed = (mode: VisualizerMode, scope: string) =>
     `${scope}-${getVisualizerRegistryEntry(mode).previewSeed}`;
 
 /*
- * Runtime contribution channel for mod visualizers (src/mods/modVisualizers).
+ * Runtime contribution channel for mod visualizers (src/mods/folium/registries/visualizers).
  * Appends entries to the live registry so every consumer that iterates
  * VISUALIZER_REGISTRY or queries by mode picks them up without a rebuild.
  * Mode ids are prefixed (`mod:<modId>:<id>`) by the loader so a mod can never
- * shadow a builtin mode; duplicates are rejected.
+ * shadow a builtin mode; duplicates are rejected. The ordered list is kept
+ * sorted so pickers show mod modes by the order they declare.
  */
 export const appendVisualizerEntry = (entry: VisualizerRegistryEntry): boolean => {
     if (VISUALIZER_REGISTRY_BY_MODE[entry.mode]) {
@@ -89,6 +88,7 @@ export const appendVisualizerEntry = (entry: VisualizerRegistryEntry): boolean =
     }
     VISUALIZER_REGISTRY_BY_MODE[entry.mode] = entry;
     VISUALIZER_REGISTRY.push(entry);
+    VISUALIZER_REGISTRY.sort((left, right) => left.order - right.order);
     return true;
 };
 

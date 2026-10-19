@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { APP_VERSION, GUIDE_VERSION_STORAGE_KEY } from '../helpers/appState';
+import { APP_VERSION, GUIDE_VERSION_STORAGE_KEY, waitForAppMounted } from '../helpers/appState';
 
 // test/ui/commandPaletteSizing.spec.ts
 // 命令面板同时是携带 UI 的命令（surface）的画布，所以面板的外框尺寸是一条硬契约：
@@ -35,6 +35,7 @@ const NO_PINNED_COMMANDS: PinnedSlots = [null, null, null];
 const seedApp = async (page: Page, pinnedCommandIds: PinnedSlots) => {
     await page.addInitScript(([version, guideKey, pinnedKey, pinned]) => {
         localStorage.clear();
+        localStorage.setItem('library_suite_prompt_seen', 'true');
         localStorage.setItem('i18nextLng', 'zh-CN');
         localStorage.setItem('open_player_on_launch', 'true');
         localStorage.setItem('visualizer_mode', 'classic');
@@ -52,6 +53,7 @@ const openPlayerPage = async (page: Page, pinnedCommandIds: PinnedSlots = NO_PIN
     await seedApp(page, pinnedCommandIds);
 
     await page.goto('/');
+    await waitForAppMounted(page);
     // 重试到真的写进 IndexedDB 为止；定长 sleep 只是在赌模块图和 DB 都已就绪。
     await expect.poll(async () => page.evaluate(async (songs) => {
         try {
@@ -65,6 +67,7 @@ const openPlayerPage = async (page: Page, pinnedCommandIds: PinnedSlots = NO_PIN
         }
     }, QUEUE_FIXTURE)).toBe(true);
     await page.reload();
+    await waitForAppMounted(page);
     // 重载后不定长等待：pressUntilPaletteOpens 会一直敲到面板真的响应。
 };
 

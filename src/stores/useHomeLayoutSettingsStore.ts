@@ -5,7 +5,8 @@
 
 import { create } from 'zustand';
 import i18n from '../i18n/config';
-import { getStoredBoolean } from './storagePrimitives';
+import { getStoredBoolean, setStoredBoolean } from './storagePrimitives';
+import { useHomeCardPositionStore } from './useHomeCardPositionStore';
 import { setStatusMessage } from './useStatusMessageStore';
 
 const readStoredHomeLayoutStyle = (): 'carousel' | 'grid' => {
@@ -30,6 +31,8 @@ const readStoredGrid3dCardStyle = (): 'image' | 'card' => {
 };
 
 export type HomeLayoutSettingsState = {
+    rememberHomeCardPosition: boolean;
+    handleToggleRememberHomeCardPosition: (remember: boolean) => void;
     grid3dCardStyle: 'image' | 'card';
     handleSetGrid3dCardStyle: (style: 'image' | 'card') => void;
     homeLayoutStyle: 'carousel' | 'grid';
@@ -37,14 +40,23 @@ export type HomeLayoutSettingsState = {
     showHomeTabRadio: boolean;
     showHomeTabAlbums: boolean;
     showHomeTabLocal: boolean;
+    /** Shown only where the active platform has an explore page; this hides it there too. */
+    showHomeTabExplore: boolean;
     handleSetHomeLayoutStyle: (style: 'carousel' | 'grid') => void;
     handleToggleHomeTabPlaylist: (show: boolean) => void;
     handleToggleHomeTabRadio: (show: boolean) => void;
     handleToggleHomeTabAlbums: (show: boolean) => void;
     handleToggleHomeTabLocal: (show: boolean) => void;
+    handleToggleHomeTabExplore: (show: boolean) => void;
 };
 
 export const useHomeLayoutSettingsStore = create<HomeLayoutSettingsState>((set, get) => ({
+    rememberHomeCardPosition: getStoredBoolean('remember_home_card_position', true),
+    handleToggleRememberHomeCardPosition: (remember) => {
+        set({ rememberHomeCardPosition: remember });
+        setStoredBoolean('remember_home_card_position', remember);
+        if (!remember) useHomeCardPositionStore.getState().clear();
+    },
     grid3dCardStyle: readStoredGrid3dCardStyle(),
     handleSetGrid3dCardStyle: (style) => {
         set({ grid3dCardStyle: style });
@@ -59,6 +71,7 @@ export const useHomeLayoutSettingsStore = create<HomeLayoutSettingsState>((set, 
     showHomeTabRadio: getStoredBoolean('show_home_tab_radio', true),
     showHomeTabAlbums: getStoredBoolean('show_home_tab_albums', true),
     showHomeTabLocal: getStoredBoolean('show_home_tab_local', true),
+    showHomeTabExplore: getStoredBoolean('show_home_tab_explore', true),
     handleSetHomeLayoutStyle: () => {
         if (typeof window !== 'undefined') {
             localStorage.setItem('home_layout_style', 'grid');
@@ -85,6 +98,10 @@ export const useHomeLayoutSettingsStore = create<HomeLayoutSettingsState>((set, 
         set({ showHomeTabLocal: show });
         if (typeof window !== 'undefined') localStorage.setItem('show_home_tab_local', show.toString());
     },
+    handleToggleHomeTabExplore: (show) => {
+        set({ showHomeTabExplore: show });
+        if (typeof window !== 'undefined') localStorage.setItem('show_home_tab_explore', show.toString());
+    },
 }));
 
 /**
@@ -92,6 +109,8 @@ export const useHomeLayoutSettingsStore = create<HomeLayoutSettingsState>((set, 
  * legitimately edit this whole domain at once. Ordinary consumers select one field instead.
  */
 export const selectHomeLayoutSettingsSnapshot = (state: HomeLayoutSettingsState) => ({
+    rememberHomeCardPosition: state.rememberHomeCardPosition,
+    handleToggleRememberHomeCardPosition: state.handleToggleRememberHomeCardPosition,
     grid3dCardStyle: state.grid3dCardStyle,
     handleSetGrid3dCardStyle: state.handleSetGrid3dCardStyle,
     homeLayoutStyle: state.homeLayoutStyle,
@@ -99,9 +118,11 @@ export const selectHomeLayoutSettingsSnapshot = (state: HomeLayoutSettingsState)
     showHomeTabRadio: state.showHomeTabRadio,
     showHomeTabAlbums: state.showHomeTabAlbums,
     showHomeTabLocal: state.showHomeTabLocal,
+    showHomeTabExplore: state.showHomeTabExplore,
     handleSetHomeLayoutStyle: state.handleSetHomeLayoutStyle,
     handleToggleHomeTabPlaylist: state.handleToggleHomeTabPlaylist,
     handleToggleHomeTabRadio: state.handleToggleHomeTabRadio,
     handleToggleHomeTabAlbums: state.handleToggleHomeTabAlbums,
     handleToggleHomeTabLocal: state.handleToggleHomeTabLocal,
+    handleToggleHomeTabExplore: state.handleToggleHomeTabExplore,
 });

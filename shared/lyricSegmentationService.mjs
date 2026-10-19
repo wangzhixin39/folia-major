@@ -1,3 +1,9 @@
+import {
+  detectOpenAICompatibleProvider,
+  rejectsOpenAICompatibleParameter,
+  sendOpenAICompatibleRequest,
+} from './openAICompatibleRequest.mjs';
+
 // shared/lyricSegmentationService.mjs
 // Server-side lyric word segmentation, shared by the Vercel edge handler and the Cloudflare
 // Worker. Those two runtimes differ only in where the environment comes from, so they are thin
@@ -38,6 +44,16 @@ const timeoutSignal = (timeoutMs) => (
 
 const isAbort = (error) => error && (error.name === 'TimeoutError' || error.name === 'AbortError');
 
+/** An address without its credentials and query: what a message may show of it. */
+const addressForMessage = (rawUrl) => {
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return 'the AI service';
+  }
+};
+
 /** Thrown with an HTTP status so both adapters can map failures without re-deriving them. */
 export class SegmentationRequestError extends Error {
   constructor(message, status = 500) {
@@ -77,37 +93,7 @@ const resolveOpenAICompatibleModel = (apiUrl, configuredModel) => {
   if (trimmedModel) {
     return trimmedModel;
   }
-  try {
-    const hostname = new URL(apiUrl).hostname.toLowerCase();
-    if (hostname === 'api.deepseek.com' || hostname.endsWith('.deepseek.com')) {
-      return DEEPSEEK_DEFAULT_MODEL;
-    }
-  } catch {
-    // Fall back to the generic OpenAI default when URL parsing fails.
-  }
-  return DEFAULT_OPENAI_MODEL;
-};
-
-const detectOpenAICompatibleProvider = (apiUrl, model) => {
-  const normalizedModel = model.trim().toLowerCase();
-  if (normalizedModel.startsWith('deepseek-')) {
-    return 'deepseek';
-  }
-  try {
-    const hostname = new URL(apiUrl).hostname.toLowerCase();
-    if (hostname === 'api.deepseek.com' || hostname.endsWith('.deepseek.com')) {
-      return 'deepseek';
-    }
-    if (hostname === 'api.openai.com' || hostname.endsWith('.openai.com')) {
-      return 'openai';
-    }
-  } catch {
-    // Fall through to generic provider handling.
-  }
-  if (/^(gpt|o[1-9]|o[1-9]-|chatgpt-)/.test(normalizedModel)) {
-    return 'openai';
-  }
-  return 'generic';
+  return detectOpenAICompatibleProvider(apiUrl) === 'deepseek' ? DEEPSEEK_DEFAULT_MODEL : DEFAULT_OPENAI_MODEL;
 };
 
 const resolveTemperature = (value) => {
@@ -150,11 +136,6 @@ const extractContentText = (message) => {
 /** Remembers the working request shape per endpoint+model, so probing is paid once per instance. */
 const reasoningAttemptCache = new Map();
 
-const rejectsParameters = (errorText, params) => {
-  const message = String(errorText).toLowerCase();
-  return Object.keys(params).some((key) => message.includes(key.toLowerCase()));
-};
-
 const exhaustedByReasoning = (choice, usage) => {
   const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens;
   const hasReasoning = Boolean(reasoningTokens || choice?.message?.reasoning_content);
@@ -178,15 +159,20 @@ const describeEmpty = (choice, usage, model) => {
 const sendOpenAICompatible = async (apiUrl, apiKey, body, fetchImpl) => {
   let response;
   try {
-    response = await fetchImpl(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(body),
-      signal: timeoutSignal(DEFAULT_AI_TIMEOUT_MS),
+    response = await sendOpenAICompatibleRequest({
+      apiUrl,
+      provider: detectOpenAICompatibleProvider(apiUrl),
+      body,
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        signal: timeoutSignal(DEFAULT_AI_TIMEOUT_MS),
+      },
+      fetchImpl,
     });
   } catch (error) {
     if (isAbort(error)) {
-      throw new SegmentationRequestError(`Request to ${apiUrl} timed out`, 504);
+      throw new SegmentationRequestError(`Request to ${addressForMessage(apiUrl)} timed out`, 504);
     }
     throw error;
   }
@@ -213,7 +199,7 @@ const sendOpenAICompatible = async (apiUrl, apiKey, body, fetchImpl) => {
 const runOpenAICompatible = async (lines, env, fetchImpl) => {
   const apiUrl = normalizeOpenAIChatCompletionsUrl(env.OPENAI_API_URL);
   const model = resolveOpenAICompatibleModel(apiUrl, env.OPENAI_API_MODEL);
-  const provider = detectOpenAICompatibleProvider(apiUrl, model);
+  const provider = detectOpenAICompatibleProvider(apiUrl);
   const temperature = resolveTemperature(env.OPENAI_API_TEMPERATURE);
 
   const messages = [
@@ -238,18 +224,23 @@ const runOpenAICompatible = async (lines, env, fetchImpl) => {
     const { params } = REASONING_SUPPRESSION_ATTEMPTS[index];
     const isLastAttempt = index === REASONING_SUPPRESSION_ATTEMPTS.length - 1;
     const budget = isLastAttempt ? SEGMENTATION_MAX_OUTPUT_TOKENS * 4 : SEGMENTATION_MAX_OUTPUT_TOKENS;
+    // DeepSeek's official switch belongs to segmentation policy, not the generic HTTP transport.
+    const reasoningParams = provider === 'deepseek'
+      ? { thinking: { type: 'disabled' }, ...params }
+      : params;
 
     const result = await sendOpenAICompatible(apiUrl, env.OPENAI_API_KEY, {
       model,
       messages,
       temperature,
-      max_tokens: budget,
-      ...params,
+      [provider === 'openai' ? 'max_completion_tokens' : 'max_tokens']: budget,
+      ...reasoningParams,
       response_format: responseFormat,
     }, fetchImpl);
 
     if (!result.ok) {
-      if (!isLastAttempt && (result.status === 400 || result.status === 422) && rejectsParameters(result.errorText, params)) {
+      if (!isLastAttempt
+        && Object.keys(params).some((key) => rejectsOpenAICompatibleParameter(result.status, result.errorText, key))) {
         continue;
       }
       throw new SegmentationRequestError(result.errorText, 502);

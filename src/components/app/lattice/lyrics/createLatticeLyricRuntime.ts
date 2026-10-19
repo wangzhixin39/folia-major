@@ -1,5 +1,5 @@
 import { cubicBezier } from 'framer-motion';
-import { loadPixi } from '../../../visualizer/loadPixi';
+import { loadPixi } from '../../../visualizer/pixi/loadPixi';
 import { clearMonetMeasurementCaches, type MonetVisibleLineEntry } from '../../../visualizer/monet/monetLyricsModel';
 import { MONET_SCROLL_SPRING, MONET_SCALE_SPRING, resolveMonetTone } from '../../../visualizer/monet/monetLyricMotion';
 import { createLatticeRaster } from './latticeLyricRaster';
@@ -9,6 +9,7 @@ import { createLatticeEdgeFilter } from './latticeLyricFilters';
 import { createLatticeTimeline, stepLatticeSpring } from './latticeLyricTimeline';
 import { createLatticeLyricFrameLoop } from './latticeLyricFrameLoop';
 import type { LatticeLyricInput, LatticeLyricRuntime } from './types';
+import { resolveSingleTrackSubtitleMode } from '../../../../utils/lyrics/alternateText';
 
 // src/components/app/lattice/lyrics/createLatticeLyricRuntime.ts
 interface Track { view: LatticeLineView; y: number; vy: number; scale: number; vs: number;
@@ -16,6 +17,18 @@ interface Track { view: LatticeLineView; y: number; vy: number; scale: number; v
     status: MonetVisibleLineEntry['status']; offset: number; leaving: boolean; }
 const ease = cubicBezier(0.32, 0.72, 0, 1);
 let initialization: Promise<unknown> = Promise.resolve();
+
+/**
+ * Device pixels per CSS pixel the canvas, its filter passes and its glyph textures are rendered at.
+ *
+ * Tied to the screen rather than fixed at 2: on a 1x display a fixed 2 pushed four times the
+ * pixels the screen could show through every blur and edge pass per frame. Always a whole number:
+ * the card is composited at camera scale, so a fractional ratio (4K at 125-175%) leaves too little
+ * supersampling for that downscale and visibly softens glyph edges. Capped at 2 so a denser screen
+ * never costs more than before.
+ */
+export const latticeLyricResolution = (devicePixelRatio: number) =>
+    Math.min(2, Math.max(1, Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? Math.ceil(devicePixelRatio) : 1));
 
 // Passing boolean `true` makes Pixi release module-global pools shared with the Player renderer.
 const destroyApplication = (app: import('pixi.js').Application) => {
@@ -36,7 +49,7 @@ async function initialize(host: HTMLElement, initial: LatticeLyricInput, signal:
     if (signal.aborted) return null;
     const app = new pixi.Application();
     try { await app.init({ preference: 'webgl', backgroundAlpha: 0, antialias: true,
-        width: 1, height: 1, resolution: 2, autoDensity: true, autoStart: false, sharedTicker: false }); }
+        width: 1, height: 1, resolution: latticeLyricResolution(window.devicePixelRatio), autoDensity: true, autoStart: false, sharedTicker: false }); }
     catch (error) {
         if (app.renderer) destroyApplication(app);
         else { app.ticker?.destroy(); app.stage.destroy({ children: true }); }
@@ -51,10 +64,11 @@ async function initialize(host: HTMLElement, initial: LatticeLyricInput, signal:
 function attachRuntime(pixi: typeof import('pixi.js'), app: import('pixi.js').Application, host: HTMLElement,
     initial: LatticeLyricInput, onError: (error: unknown) => void): LatticeLyricRuntime {
     const raster = createLatticeRaster(pixi);
-    let input = initial, width = 1, height = 1, destroyed = false;
+    let input = initial, width = 1, height = 1, resolution = app.renderer.resolution, destroyed = false;
+    let reportError = onError;
     let typography = resolveLatticeTypography(input, width, height, raster.measure);
     const stage = new pixi.Container(); stage.sortableChildren = true; app.stage.addChild(stage);
-    const edge = createLatticeEdgeFilter(pixi); stage.filters = [edge.filter];
+    const edge = createLatticeEdgeFilter(pixi, resolution); stage.filters = [edge.filter];
     host.appendChild(app.canvas); app.canvas.setAttribute('aria-hidden', 'true');
     let timeline = createLatticeTimeline(input.lines), lastTime = input.currentTime.get();
     let lastEntries: MonetVisibleLineEntry[] | null = null;
@@ -67,9 +81,11 @@ function attachRuntime(pixi: typeof import('pixi.js'), app: import('pixi.js').Ap
         for (const entry of entries) {
             let track = tracks.get(entry.key);
             if (!track) {
+                // Lattice draws the translation row inside its own lyric scene, not the shared bottom subtitle, so it
+                // cannot stack two rows yet: the 'both' option falls back to translation only (phase 2 will add a track).
                 const layout = layoutLatticeLine(entry.line, typography, Math.max(1, width - typography.padding * 2), raster.measure,
-                    input.subtitleContentMode === 'romanization');
-                const view = createLatticeLineView(pixi, raster, stage, entry, layout, typography, input);
+                    resolveSingleTrackSubtitleMode(input.subtitleContentMode ?? 'translation') === 'romanization');
+                const view = createLatticeLineView(pixi, raster, stage, entry, layout, typography, input, resolution);
                 track = { view, y: height * 0.46 + (entry.offset >= 0 ? 34 : -34), vy: 0, scale: 0.7, vs: 0,
                     alpha: 0, blur: 5, fromAlpha: 0, fromBlur: 5, elapsed: 0, status: entry.status, offset: entry.offset, leaving: false };
                 tracks.set(entry.key, track);
@@ -123,11 +139,15 @@ function attachRuntime(pixi: typeof import('pixi.js'), app: import('pixi.js').Ap
             }
             app.render();
             return moving;
-        } catch (error) { onError(error); return false; }
+        } catch (error) { reportError(error); return false; }
     };
     const loop = createLatticeLyricFrameLoop(draw);
     let unsubscribe = input.currentTime.on('change', loop.wake);
     const runtime: LatticeLyricRuntime = {
+        attach(nextHost) {
+            if (!destroyed && app.canvas.parentElement !== nextHost) nextHost.appendChild(app.canvas);
+        },
+        setErrorHandler(handler) { reportError = handler; },
         update(next) {
             if (destroyed) return;
             const rebuild = next.songKey !== input.songKey || next.lines !== input.lines || next.theme !== input.theme
@@ -140,10 +160,12 @@ function attachRuntime(pixi: typeof import('pixi.js'), app: import('pixi.js').Ap
             if (rebuild) { clear(); timeline = createLatticeTimeline(input.lines); typography = resolveLatticeTypography(input, width, height, raster.measure); }
             loop.wake();
         },
-        resize(w, h) {
-            if (destroyed || (w === width && h === height)) return;
-            width = w; height = h;
-            app.renderer.resize(Math.max(1, width), Math.max(1, height));
+        resize(w, h, devicePixelRatio) {
+            const nextResolution = latticeLyricResolution(devicePixelRatio);
+            if (destroyed || (w === width && h === height && nextResolution === resolution)) return;
+            width = w; height = h; resolution = nextResolution;
+            app.renderer.resize(Math.max(1, width), Math.max(1, height), resolution);
+            edge.filter.resolution = resolution;
             stage.filterArea = new pixi.Rectangle(0, 0, width, height);
             typography = resolveLatticeTypography(input, width, height, raster.measure);
             clear(); loop.wake();

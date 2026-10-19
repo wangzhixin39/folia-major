@@ -7,22 +7,24 @@ import {
     HEX_CARD_MIN_OPACITY_DEFAULT,
     HEX_CARD_MIN_SCALE_BOUNDS,
     HEX_CARD_MIN_SCALE_DEFAULT,
-} from '../../folia-grid/hexCardTransform';
+} from '../../../utils/hexCardFalloff';
 import { useGridViewSettingsStore } from '../../../stores/useGridViewSettingsStore';
 
 // src/components/modal/settings/GridViewSettingsSection.tsx
 // Look of the folia card grid: full-bleed covers plus the two floors of the distance falloff.
-// Reads the store directly, the way LatticeSettingsSection does, so AppearanceSettingsSubview does
-// not grow another six props. Deliberately outside the appearance import/export payload.
+// Reads the store directly. Deliberately outside the appearance import/export payload. The command
+// palette hosts this on a surface; the settings dialog draws the same options in pages/HomePage.
 
 type GridViewSettingsSectionProps = {
     settingsCardClass: string;
+    settingsDividerClass: string;
     toggleOffBackgroundClass: string;
     theme?: Theme;
 };
 
 const GridViewSettingsSection: React.FC<GridViewSettingsSectionProps> = ({
     settingsCardClass,
+    settingsDividerClass,
     toggleOffBackgroundClass,
     theme,
 }) => {
@@ -109,7 +111,7 @@ const GridViewSettingsSection: React.FC<GridViewSettingsSectionProps> = ({
             {/* Squaring only means anything once the artwork owns the whole card; under the
                 polaroid frame the extra height is the printed label. */}
             {fullBleedCover && (
-                <div className="border-t border-black/5 pt-4 dark:border-white/5">
+                <div className={`border-t pt-4 ${settingsDividerClass}`}>
                     {renderToggleRow(
                         t('options.gridViewSquareCard'),
                         t('options.gridViewSquareCardDesc'),
@@ -119,7 +121,7 @@ const GridViewSettingsSection: React.FC<GridViewSettingsSectionProps> = ({
                 </div>
             )}
 
-            <div className="border-t border-black/5 pt-4 space-y-4 dark:border-white/5">
+            <div className={`border-t pt-4 space-y-4 ${settingsDividerClass}`}>
                 {renderSlider(
                     t('options.gridViewMinCardScale'),
                     t('options.gridViewMinCardScaleDesc'),

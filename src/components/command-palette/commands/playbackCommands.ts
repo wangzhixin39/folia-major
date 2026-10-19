@@ -1,19 +1,31 @@
 import { PlayerState } from '../../../types';
-import { Heart, ListX, Pause, Play, Repeat, Shuffle, SkipBack, SkipForward, Star, VolumeX } from 'lucide-react';
+import { Heart, ListX, Pause, Piano, Play, Repeat, Shuffle, SkipBack, SkipForward, Star, Volume1, Volume2, VolumeX } from 'lucide-react';
 import { executeModeCommand } from './executeModeCommand';
 import { queueCommand } from './queueCommand';
 import { volumeCommand } from './volumeCommand';
 import { fmModeCommand } from './fmModeCommand';
 import type { CommandPaletteCommand } from '../types';
 import { createToggleCommand, createReplayGainCommand, createSoundPresetCommand } from '../commandFactories';
+import { canShuffleQueue } from '../../../utils/playbackNeighbors';
 
 // src/components/command-palette/commands/playbackCommands.ts
 // Commands in the `playback` group: transport, queue, volume, Personal FM mode, ReplayGain, and
 // sound presets.
 
+/** One press of volume up or down, as a fraction of full volume. */
+const VOLUME_STEP = 0.05;
+
 export const playbackCommands: CommandPaletteCommand[] = [
     executeModeCommand,
     queueCommand,
+    createToggleCommand(
+        'queue-keep-open',
+        'playback',
+        'Keep queue palette open',
+        'Toggle keeping the command palette open after choosing a queue song',
+        ['stay open', 'keep queue open', '切歌不关闭', '队列保持打开'],
+        context => context.playback.setQueuePaletteKeepOpen(!context.playback.queuePaletteKeepOpen),
+    ),
     volumeCommand,
     fmModeCommand,
     createReplayGainCommand('off', 'Disable ReplayGain', 'Play audio without ReplayGain adjustment', ['replaygain off', 'audio gain off', '关闭音频增益', '关闭 replaygain', 'gbyyzy']),
@@ -71,6 +83,15 @@ export const playbackCommands: CommandPaletteCommand[] = [
             return true;
         },
     },
+    createToggleCommand(
+        'playback-toggle',
+        'playback',
+        'Play / Pause',
+        'Pause when playing, play when paused',
+        ['play pause', 'toggle playback', 'resume', '播放暂停', '暂停播放', '继续播放'],
+        context => context.playback.togglePlay(),
+        { icon: Play },
+    ),
     createToggleCommand('playback-next', 'playback', 'Next track', 'Play the next track', ['next', '下一首'], context => context.playback.next(), { icon: SkipForward, executeShortcut: 'n' }),
     createToggleCommand('playback-prev', 'playback', 'Previous track', 'Play the previous track', ['prev', 'previous', '上一首'], context => context.playback.prev(), { icon: SkipBack, executeShortcut: 'b' }),
     createToggleCommand('playback-loop', 'playback', 'Toggle loop', 'Change loop mode', ['loop', '循环'], context => context.playback.toggleLoop(), { icon: Repeat, executeShortcut: 'l' }),
@@ -108,7 +129,30 @@ export const playbackCommands: CommandPaletteCommand[] = [
         context => context.playback.toggleMute(),
         { icon: VolumeX },
     ),
-    createToggleCommand('playback-shuffle', 'playback', 'Shuffle queue', 'Shuffle current play queue', ['shuffle', '打乱', '打乱队列'], context => context.playback.shuffleQueue(), { icon: Shuffle, executeShortcut: 'r', isAvailable: context => !context?.playback.isFmMode }),
+    createToggleCommand(
+        'playback-volume-up',
+        'playback',
+        'Volume up',
+        'Raise the volume by 5%',
+        ['louder', 'increase volume', '音量加', '调大音量', '大声'],
+        context => context.playback.stepVolume(VOLUME_STEP),
+        { icon: Volume2 },
+    ),
+    createToggleCommand(
+        'playback-volume-down',
+        'playback',
+        'Volume down',
+        'Lower the volume by 5%',
+        ['quieter', 'decrease volume', '音量减', '调小音量', '小声'],
+        context => context.playback.stepVolume(-VOLUME_STEP),
+        { icon: Volume1 },
+    ),
+    createToggleCommand('playback-shuffle', 'playback', 'Shuffle queue', 'Shuffle current play queue', ['shuffle', '打乱', '打乱队列'], context => context.playback.shuffleQueue(), {
+        icon: Shuffle,
+        executeShortcut: 'r',
+        // The palette's context does not say whether the stage is playing, so that part is false.
+        isAvailable: context => (context ? canShuffleQueue(context.playback.queue.length, context.playback.isFmMode, false) : true),
+    }),
     {
         id: 'playback-clear-queue',
         isAvailable: context => (context ? !context.playback.isFmMode && context.playback.queue.length > 0 : true),
@@ -133,5 +177,16 @@ export const playbackCommands: CommandPaletteCommand[] = [
         description: 'Run automatic best lyric matching for the current song',
         keywords: ['best lyrics', 'auto match lyrics', '最佳歌词', '匹配最佳歌词', '自动匹配歌词'],
         execute: (_input, context) => context.playback.runAutoMatchBestLyric(),
+    },
+    {
+        id: 'playback-toggle-pure-music',
+        // 只对本地歌曲有意义，与两个歌词匹配窗口里的「标记为纯音乐」是同一个开关。
+        isAvailable: context => (context ? context.playback.canToggleCurrentSongPureMusicMark : true),
+        group: 'playback',
+        title: 'Mark or unmark as instrumental',
+        description: 'Mark the current local song as instrumental so its lyrics are no longer matched automatically; run again to unmark',
+        keywords: ['instrumental', 'pure music', 'no lyrics', '纯音乐', '标记纯音乐', '取消纯音乐', '无歌词'],
+        icon: Piano,
+        execute: (_input, context) => context.playback.toggleCurrentSongPureMusicMark(),
     }
 ];

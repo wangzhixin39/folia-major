@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { APP_VERSION, GUIDE_VERSION_STORAGE_KEY } from '../helpers/appState';
+import { APP_VERSION, GUIDE_VERSION_STORAGE_KEY, waitForAppMounted } from '../helpers/appState';
 
 // test/ui/commandPaletteVirtualList.spec.ts
 // 「全部命令」列表的虚拟化：既要证明它真的只渲染可视区（否则虚拟化白做），
@@ -10,6 +10,7 @@ import { APP_VERSION, GUIDE_VERSION_STORAGE_KEY } from '../helpers/appState';
 const seedApp = async (page: Page) => {
     await page.addInitScript(([version, guideKey]) => {
         localStorage.clear();
+        localStorage.setItem('library_suite_prompt_seen', 'true');
         localStorage.setItem('i18nextLng', 'zh-CN');
         localStorage.setItem('open_player_on_launch', 'true');
         localStorage.setItem('visualizer_mode', 'classic');
@@ -27,6 +28,7 @@ const palette = (page: Page) => page.getByTestId('command-palette-panel');
 const openAllCommands = async (page: Page) => {
     await seedApp(page);
     await page.goto('/');
+    await waitForAppMounted(page);
 
     // 不定长等待开机：一直敲到面板真的响应为止。
     await expect.poll(async () => {

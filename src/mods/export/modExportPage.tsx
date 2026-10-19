@@ -6,8 +6,12 @@ import './modExportPage.css';
 import { DEFAULT_THEME } from '@/services/baseThemes';
 import { getVisualizerRegistryEntry, hasVisualizerMode } from '@/components/visualizer/registry';
 import { applyVisualizerTuning, type VisualizerTuningBundle } from '@/components/visualizer/tuningRegistry';
-import { registerModVisualizers, type ModVisualizerDescriptor } from '../modVisualizers';
+import { reconcileFoliumClients } from '../runtime/clientLoader';
+import { waitForExportMode } from './exportStart';
+import { hydrateFoliumParamsForExport } from '../params/paramStore';
+import type { ModRuntimeInfo } from '../types';
 import type { AudioBands, Line, Theme, VisualizerMode } from '@/types';
+import { NO_LYRIC_LINES } from '@/utils/lyrics/noLyricLines';
 
 // src/mods/export/modExportPage.tsx
 // Standalone hidden renderer for mod video export. It drives a chosen
@@ -20,17 +24,21 @@ interface ExportPageConfig {
     visualizerMode: string;
     visualizerTunings?: VisualizerTuningBundle | null;
     theme: Theme | null;
-    songMeta: { title?: string; artist?: string } | null;
+    /** `duration`: the exported song's length in seconds (absent or 0 when unknown). */
+    songMeta: { title?: string; artist?: string; duration?: number } | null;
     startSec?: number;
     backgroundMode?: 'none' | 'theme';
     transparent?: boolean;
     /**
-     * Mod-contributed visualizer modes, injected by the export service. This
+     * Loaded mods with a client entry, injected by the export service. This
      * window runs without a preload, so there is no mod bridge to ask - the
-     * descriptors have to arrive with the config or a `mod:` visualizerMode
-     * would silently fall back to a builtin one.
+     * clients have to arrive with the config and activate here (in the
+     * 'export' context) or a mod visualizerMode would silently fall back to a
+     * builtin one.
      */
-    modVisualizers?: ModVisualizerDescriptor[];
+    modClients?: ModRuntimeInfo[];
+    /** Folium parameter values (settings, tunings) the user sees in the app. */
+    foliumParams?: Record<string, Record<string, unknown>>;
 }
 
 const STATIC_AUDIO_BANDS: AudioBands = {
@@ -97,16 +105,27 @@ const ModExportPage: React.FC = () => {
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }, [applyLineIndex]);
 
-    // Async on purpose: the injected mod visualizer modules are imported here,
-    // and the export service awaits this call, so the mode requested by the
-    // snapshot is registered before the first frame is rendered.
-    const configure = useCallback(async (nextConfig: ExportPageConfig) => {
-        if (nextConfig.modVisualizers?.length) {
-            await registerModVisualizers(nextConfig.modVisualizers);
+    // Async on purpose: the injected mod clients are imported and activated
+    // here, and the export service awaits this call, so the mode requested by
+    // the snapshot is registered before the first frame is rendered. Param
+    // values land first so the first frame already uses the user's settings.
+    // The wait is for every client, with no cap of this window's own, and then
+    // for the requested style's own mod if that one is slow and still starting.
+    // When the style is a mod's and is not there once that start has ended, the
+    // answer says so and the export service stops there (exportStart.ts).
+    const configure = useCallback(async (nextConfig: ExportPageConfig): Promise<{ ok: boolean; error?: string }> => {
+        hydrateFoliumParamsForExport(nextConfig.foliumParams ?? {});
+        if (nextConfig.modClients?.length) {
+            await reconcileFoliumClients(nextConfig.modClients, 'export');
+        }
+        const problem = await waitForExportMode(nextConfig.visualizerMode);
+        if (problem) {
+            return { ok: false, error: problem };
         }
         linesRef.current = nextConfig.lyricData?.lines ?? [];
         setConfig(nextConfig);
         applyLineIndex(Number(nextConfig.startSec ?? 0));
+        return { ok: true };
     }, [applyLineIndex]);
 
     const frameApiRef = useRef({ renderFrame, configure });
@@ -127,7 +146,7 @@ const ModExportPage: React.FC = () => {
     const mode = config?.visualizerMode ?? 'classic';
     const effectiveMode: VisualizerMode = hasVisualizerMode(mode) ? mode : 'classic';
     const entry = getVisualizerRegistryEntry(effectiveMode);
-    const lines = config?.lyricData?.lines ?? [];
+    const lines = config?.lyricData?.lines ?? NO_LYRIC_LINES;
     const theme = config?.theme ?? DEFAULT_THEME;
     // 'theme' fills the container with the song theme background color for an
     // opaque, platform-independent export; 'none' keeps the container fully
@@ -149,6 +168,7 @@ const ModExportPage: React.FC = () => {
         showText: true,
         songTitle: config?.songMeta?.title ?? null,
         songArtist: config?.songMeta?.artist ?? null,
+        duration: Number(config?.songMeta?.duration) || 0,
         paused: false,
         visualizerOpacity: 1,
         // 'theme' mode keeps the default background renderer; 'none'

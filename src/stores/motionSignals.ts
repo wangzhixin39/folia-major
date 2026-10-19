@@ -33,6 +33,14 @@ export const currentTime = motionValue(0);
 /** The lyric clock. Separate from `currentTime`: it carries the per-song timeline offset. */
 export const lyricCurrentTime = motionValue(0);
 
+/**
+ * The song hand-off of an automix/crossfade blend, as the main window's visualizer draws it: how far
+ * it has come (0..1, transitionCue's getTransitionHandoffProgress), and the incoming track's lyric
+ * clock. Written by the visualizer bridge while a blend holds the picture on the outgoing track.
+ */
+export const handoffProgress = motionValue(0);
+export const handoffLyricCurrentTime = motionValue(0);
+
 /** Overall analyser energy, 0..1. */
 export const audioPower = motionValue(0);
 
@@ -43,8 +51,27 @@ export const vocal = motionValue(0);
 export const treble = motionValue(0);
 export const spectrum = motionValue(new Uint8Array(0));
 
+/**
+ * Beat-synchronous impact envelopes, decaying after each beat / downbeat of the playing track:
+ * 0..1, times 智能动感模式's 轻拍 / 重拍 strengths (0..2). Only driven while 智能动感模式 is on and
+ * something on screen draws beat FX (see src/services/beatFx); they stay at 0 otherwise, so
+ * consumers can read them unconditionally.
+ */
+export const beatImpact = motionValue(0);
+export const downbeatImpact = motionValue(0);
+
 /** The band set as one stable object, so it can be passed straight to a visualizer. */
 export const audioBands: AudioBandSignals = { bass, lowMid, mid, vocal, treble, spectrum };
 
 /** Global bottom baseline offset in px; positioning writes it at pointer-move frequency. */
 export const playerBottomBarLiveOffset = motionValue(PLAYER_BOTTOM_BAR_BASE_OFFSET_PX);
+
+/**
+ * 思索提示胶囊跟随的光标位置，px。
+ *
+ * 悬停在可教学区域期间由 pointermove 写入，频率与指针事件同步。放在这里而不是
+ * usePonderStore，理由和上面那条底部基线一样：它是每帧值，进 React state 就等于
+ * 让整棵树按指针移动频率重渲染。store 那边只留「悬停的是哪个目标」这个离散事实。
+ */
+export const ponderPointerX = motionValue(0);
+export const ponderPointerY = motionValue(0);

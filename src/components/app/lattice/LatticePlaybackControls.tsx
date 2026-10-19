@@ -5,7 +5,7 @@ import ProgressBar from '../../ProgressBar';
 import { PlayerState } from '../../../types';
 import { getPlaybackSongKey } from '../../../utils/appPlaybackGuards';
 import { useLatticeTransport } from './LatticeTransportContext';
-import type { LatticeTile } from './latticeModel';
+import type { LatticeSongTile } from './latticeModel';
 import LatticeChromeTime from './LatticeChromeTime';
 import LatticeExtraControls from './LatticeExtraControls';
 import './LatticeChrome.css';
@@ -14,8 +14,8 @@ import './LatticeChrome.css';
 
 type LatticePlaybackControlsProps = {
     revealed: boolean;
-    tile: LatticeTile;
-    onPlay: (tile: LatticeTile) => void;
+    tile: LatticeSongTile;
+    onPlay: (tile: LatticeSongTile) => void;
     onTogglePlayback: () => void;
     onSeek: (time: number) => void;
     onOpenPlayer: () => void;
@@ -45,7 +45,13 @@ export default function LatticePlaybackControls({
         : Math.max(0, tile.song.durationMs / 1000);
 
     return (
-        <div className={`lattice-chrome ${revealed ? 'is-revealed' : ''}`} role="group" aria-label={t('home.latticePlaybackControls')}>
+        <div
+            // 思索靠这个属性认出整条控制条。类名会随样式重构改名，属性不会 —— 见 ponderSelectorContract。
+            data-ponder="lattice-chrome"
+            className={`lattice-chrome ${revealed ? 'is-revealed' : ''}`}
+            role="group"
+            aria-label={t('home.latticePlaybackControls')}
+        >
             <div className="lattice-chrome-transport">
                 <button
                     type="button"

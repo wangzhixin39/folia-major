@@ -6,10 +6,11 @@ import type { Line } from '../../../types';
 import { resolveThemeFontStack, resolveThemeFontWeight } from '../../../utils/fontStacks';
 import { getLineRenderEndTime } from '../../../utils/lyrics/renderHints';
 import type { VisualizerSharedProps } from '../definition';
-import { useVisualizerPixiHost } from '../pixiRuntimeHost';
+import { useVisualizerPixiHost } from '../pixi/pixiRuntimeHost';
 import { useVisualizerRuntime } from '../runtime';
 import { useVisualizerSongCommit } from '../songHandover';
-import { useModVisualizerModulation } from '@/mods/visualizerModulation';
+import { useFoliumTunings } from '@/mods/folium/registries/tunings';
+import { useVisualizerSettingsStore } from '../../../stores/useVisualizerSettingsStore';
 import VisualizerShell from '../VisualizerShell';
 import VisualizerSubtitleOverlay from '../VisualizerSubtitleOverlay';
 import type {
@@ -55,10 +56,17 @@ const VisualizerSonnet: React.FC<VisualizerSharedProps> = (props) => {
     const { t } = useTranslation();
     // Mod-driven per-frame multipliers (K3Panel etc.). Read once per render; the
     // runtime hot-swaps them via setModulation so the Pixi context is never rebuilt.
-    const modulation = useModVisualizerModulation('sonnet');
+    // Keys are the Folium tunables declared in ./entry.tsx.
+    const modulation = useFoliumTunings('sonnet');
     const hostRef = useRef<HTMLDivElement>(null);
     const pausedRef = useRef(paused);
     pausedRef.current = paused;
+    const sonnetTuningRef = useRef(sonnetTuning);
+    sonnetTuningRef.current = sonnetTuning;
+    // 智能动感模式 is one setting for every visualizer, so it is not part of the Sonnet tuning prop.
+    const smartBeatEnabled = useVisualizerSettingsStore(state => state.smartBeat.enabled);
+    const smartBeatEnabledRef = useRef(smartBeatEnabled);
+    smartBeatEnabledRef.current = smartBeatEnabled;
     const latestSongMetadataRef = useRef<SonnetSongMetadata>({
         title: songTitle,
         artist: songArtist,
@@ -124,7 +132,19 @@ const VisualizerSonnet: React.FC<VisualizerSharedProps> = (props) => {
         label: 'Sonnet',
         // Only inputs that genuinely need a new WebGL context. The song is handed to the live
         // runtime instead - see SonnetPixiRuntime.swapSong.
-        rebuildKey: [currentTime, lyricsFontScale, sonnetTuning, staticMode, transparentBackground],
+        // Of the tuning, only what shapes the canvas or the icon textures (post-processing decides
+        // whether the canvas is antialiased); the rest goes through setTuning, which rebuilds the
+        // scenes on the live context.
+        rebuildKey: [
+            currentTime,
+            lyricsFontScale,
+            sonnetTuning.textureResolution,
+            sonnetTuning.postProcessEnabled,
+            sonnetTuning.showOnlyText,
+            sonnetTuning.showBackgroundDecor,
+            staticMode,
+            transparentBackground,
+        ],
         song: songContext,
         create: async (host, song, signal) => {
             const { SonnetPixiRuntime } = await import('./createSonnetPixiRuntime');
@@ -134,7 +154,8 @@ const VisualizerSonnet: React.FC<VisualizerSharedProps> = (props) => {
                 songSeed: song.seed,
                 program: song.program,
                 theme: song.theme,
-                tuning: sonnetTuning,
+                tuning: sonnetTuningRef.current,
+                smartBeatEnabled: smartBeatEnabledRef.current,
                 currentTime,
                 audioPower,
                 audioBands,
@@ -149,6 +170,9 @@ const VisualizerSonnet: React.FC<VisualizerSharedProps> = (props) => {
                 modulation,
             });
             runtime.setSongMetadata(latestSongMetadataRef.current);
+            // The tuning may have moved on while Pixi was importing or initializing.
+            runtime.setTuning(sonnetTuningRef.current);
+            runtime.setSmartBeatEnabled(smartBeatEnabledRef.current);
             // The pause state may have changed while Pixi was importing or initializing.
             runtime.setPaused(pausedRef.current);
             return runtime;
@@ -165,6 +189,14 @@ const VisualizerSonnet: React.FC<VisualizerSharedProps> = (props) => {
     useEffect(() => {
         runtimeRef.current?.setPaused(paused);
     }, [paused]);
+
+    useEffect(() => {
+        runtimeRef.current?.setTuning(sonnetTuning);
+    }, [sonnetTuning]);
+
+    useEffect(() => {
+        runtimeRef.current?.setSmartBeatEnabled(smartBeatEnabled);
+    }, [smartBeatEnabled]);
 
     useEffect(() => {
         runtimeRef.current?.setModulation(modulation);

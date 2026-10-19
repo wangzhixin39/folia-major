@@ -1,5 +1,6 @@
 const { createDebugLogWriter, logsRoot } = require('./debugLogWriter.cjs');
 const { createMemoryMonitor } = require('./memoryMonitor.cjs');
+const fs = require('fs');
 
 // electron/debug/debugHost.cjs
 // The developer debug module: what is recorded, where it lands, and how the renderer switches it.
@@ -26,6 +27,11 @@ const DEFAULTS = {
     // before it was reproduced; that trade is not worth making on behalf of users who will never look.)
     runtimeLogEnabled: false,
     runtimeLogMode: 'append',
+    // The renderer's session-log switch, as it last reported it. That switch is whether anything
+    // is kept at all; the file switch above is only whether what is kept also goes to disk. It
+    // lives in the renderer (the browser build has it too) and is remembered here so that the
+    // lines written before the first window exists follow it as well.
+    consoleCaptureEnabled: true,
     // Off by default: this one costs a timer and a metrics call across every process. It is
     // switched on to answer a question, not left running.
     memoryMonitorEnabled: false,
@@ -39,6 +45,7 @@ const DEFAULTS = {
 const STORE_KEYS = {
     runtimeLogEnabled: 'debug_runtime_log_enabled',
     runtimeLogMode: 'debug_runtime_log_mode',
+    consoleCaptureEnabled: 'debug_console_capture_enabled',
     memoryMonitorEnabled: 'debug_memory_monitor_enabled',
     memoryLogEnabled: 'debug_memory_log_enabled',
     memoryLogMode: 'debug_memory_log_mode',
@@ -72,6 +79,23 @@ const migrateMemoryLogEnabled = (store, stored) => {
 let host = null;
 
 /**
+ * Open fd count per pid, read from /proc. Linux only - elsewhere, and for any process that has gone
+ * away or is not ours to read, the pid is simply left out and its row keeps null.
+ */
+const readFdCounts = (metrics, { platform = process.platform, readdirSync = fs.readdirSync } = {}) => {
+    const counts = new Map();
+    if (platform !== 'linux') return counts;
+    for (const metric of metrics) {
+        try {
+            counts.set(metric.pid, readdirSync(`/proc/${metric.pid}/fd`).length);
+        } catch {
+            // Exited between getAppMetrics and here, or sandboxed out of reach.
+        }
+    }
+    return counts;
+};
+
+/**
  * One line into the runtime log. Safe to call from anywhere in the main process, at any time.
  * `tag` is the `[Prefix]` convention the rest of the app already logs under - see docs/client-logging.md.
  */
@@ -79,14 +103,74 @@ const runtimeLine = (tag, text) => {
     host?.runtimeLine(tag, text);
 };
 
+/**
+ * Main's console lines, for the log panel inside the app.
+ *
+ * The panel lives in the renderer and records the renderer's console. A line written in this
+ * process was readable only in the runtime log file, which is off until someone switches it on.
+ * A window asks once: it gets what was said before it asked, then each later burst, on one channel
+ * so the order holds.
+ */
+const PANEL_BACKLOG = 300;
+const createPanelFeed = ({ limit = PANEL_BACKLOG, defer = setImmediate } = {}) => {
+    let backlog = [];
+    let pending = [];
+    let sending = false;
+    const windows = new Set();
+    const send = (target, lines, isBacklog) => {
+        // A page that crashed asks again once it is loaded again.
+        if (target.isDestroyed() || target.isCrashed()) { windows.delete(target); return; }
+        sending = true;
+        try { target.send('debug-main-lines', lines, isBacklog); } catch { /* closing */ } finally { sending = false; }
+    };
+    const flush = () => {
+        const lines = pending;
+        pending = [];
+        if (lines.length) for (const target of windows) send(target, lines, false);
+    };
+    return {
+        add: (at, level, text) => {
+            // Electron reports a send that failed through console.error, which is this feed's own
+            // input: taken in, that line would be sent, fail and be reported again without end.
+            if (sending) return;
+            const line = { at, level, text };
+            backlog.push(line);
+            if (backlog.length > limit) backlog = backlog.slice(-limit);
+            // One message per burst, not per line.
+            if (windows.size && pending.push(line) === 1) defer(flush);
+        },
+        subscribe: (target) => {
+            // A reloaded page asks from a window that is already listening. What is pending is in
+            // the backlog it is about to get, so it is left out of this flush.
+            windows.delete(target);
+            flush();
+            windows.add(target);
+            send(target, backlog.slice(), true);
+        },
+        clear: () => {
+            backlog = [];
+            pending = [];
+        },
+    };
+};
+
+/** One console call as a line of text. A value that cannot be serialised is not a reason to lose the line. */
+const consoleText = args => args.map((value) => {
+    if (typeof value === 'string') return value;
+    if (value instanceof Error) return value.stack || value.message;
+    try { return JSON.stringify(value); } catch { return String(value); }
+}).join(' ');
+
 const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
     const root = logsRoot(app);
     const monitor = createMemoryMonitor();
+    const panel = createPanelFeed();
 
     const readState = () => {
         const stored = {
             runtimeLogEnabled: store.get(STORE_KEYS.runtimeLogEnabled),
             runtimeLogMode: store.get(STORE_KEYS.runtimeLogMode),
+            consoleCaptureEnabled: store.get(STORE_KEYS.consoleCaptureEnabled),
             memoryMonitorEnabled: store.get(STORE_KEYS.memoryMonitorEnabled),
             memoryLogEnabled: store.get(STORE_KEYS.memoryLogEnabled),
             memoryLogMode: store.get(STORE_KEYS.memoryLogMode),
@@ -95,6 +179,7 @@ const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
         return {
             runtimeLogEnabled: typeof stored.runtimeLogEnabled === 'boolean' ? stored.runtimeLogEnabled : DEFAULTS.runtimeLogEnabled,
             runtimeLogMode: MODES.includes(stored.runtimeLogMode) ? stored.runtimeLogMode : DEFAULTS.runtimeLogMode,
+            consoleCaptureEnabled: stored.consoleCaptureEnabled !== false,
             memoryMonitorEnabled: stored.memoryMonitorEnabled === true,
             memoryLogEnabled: migrateMemoryLogEnabled(store, stored),
             memoryLogMode: MODES.includes(stored.memoryLogMode) ? stored.memoryLogMode : DEFAULTS.memoryLogMode,
@@ -117,7 +202,8 @@ const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
     // ---- runtime log -------------------------------------------------------
 
     const openRuntime = () => {
-        if (runtimeWriter || !state.runtimeLogEnabled) return;
+        // Both switches: with the session log off nothing is kept, so there is nothing to write.
+        if (runtimeWriter || !state.runtimeLogEnabled || !state.consoleCaptureEnabled) return;
         try {
             runtimeWriter = createDebugLogWriter({ root, folder: 'runtime', extension: '.log', mode: state.runtimeLogMode });
         } catch {
@@ -179,7 +265,8 @@ const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
 
         let sample;
         try {
-            sample = monitor.sample({ at: Date.now(), metrics: app.getAppMetrics(), system, heap, reports: liveReports() });
+            const metrics = app.getAppMetrics();
+            sample = monitor.sample({ at: Date.now(), metrics, system, heap, reports: liveReports(), fdCounts: readFdCounts(metrics) });
         } catch (error) {
             writeRuntime(Date.now(), 'warn', 'Debug', `memory sample failed: ${(error && error.message) || error}`);
             return;
@@ -189,7 +276,7 @@ const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
         // Pushed rather than polled: the sampling rate is decided here, and a window that is not
         // open simply has no listener. The renderer decides separately how often it redraws.
         for (const window of BrowserWindow.getAllWindows()) {
-            if (window.isDestroyed()) continue;
+            if (window.isDestroyed() || window.webContents.isCrashed()) continue;
             try { window.webContents.send('debug-memory-sample', sample); } catch { /* closing */ }
         }
     };
@@ -226,6 +313,7 @@ const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
         const next = { ...state };
         if (typeof patch.runtimeLogEnabled === 'boolean') next.runtimeLogEnabled = patch.runtimeLogEnabled;
         if (MODES.includes(patch.runtimeLogMode)) next.runtimeLogMode = patch.runtimeLogMode;
+        if (typeof patch.consoleCaptureEnabled === 'boolean') next.consoleCaptureEnabled = patch.consoleCaptureEnabled;
         if (typeof patch.memoryMonitorEnabled === 'boolean') next.memoryMonitorEnabled = patch.memoryMonitorEnabled;
         if (typeof patch.memoryLogEnabled === 'boolean') next.memoryLogEnabled = patch.memoryLogEnabled;
         if (MODES.includes(patch.memoryLogMode)) next.memoryLogMode = patch.memoryLogMode;
@@ -234,7 +322,10 @@ const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
         // A mode change has to reopen the file, not just be remembered: 'overwrite' truncates when
         // the writer opens, so a switch that only wrote the setting down would take effect at the
         // next launch and read, today, as having done nothing.
-        const runtimeChanged = next.runtimeLogEnabled !== state.runtimeLogEnabled || next.runtimeLogMode !== state.runtimeLogMode;
+        const runtimeChanged = next.runtimeLogEnabled !== state.runtimeLogEnabled || next.runtimeLogMode !== state.runtimeLogMode
+            || next.consoleCaptureEnabled !== state.consoleCaptureEnabled;
+        // Switched off, the renderer drops the lines it was holding; so does this process.
+        if (!next.consoleCaptureEnabled) panel.clear();
         const memoryChanged = next.memoryMonitorEnabled !== state.memoryMonitorEnabled
             || next.memoryLogEnabled !== state.memoryLogEnabled
             || next.memoryLogMode !== state.memoryLogMode
@@ -275,16 +366,19 @@ const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
         }
     });
 
-    // Main's own console into the same file. Patched rather than routed through call sites so that
-    // everything already logging - the analysis worker's tee, update checks, window handoff - lands
-    // in the runtime log without any of them knowing this module exists.
-    for (const level of ['log', 'info', 'warn', 'error']) {
+    ipcMain.on('debug-main-lines-ready', event => panel.subscribe(event.sender));
+
+    // Main's own console into the same file and into the app's log panel. Patched rather than
+    // routed through call sites so that everything already logging - the analysis worker's tee,
+    // update checks, window handoff - lands in both without any of them knowing this module exists.
+    for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
         const original = console[level].bind(console);
         console[level] = (...args) => {
             try {
-                writeRuntime(Date.now(), level, 'main', args.map(value => (
-                    typeof value === 'string' ? value : (value instanceof Error ? (value.stack || value.message) : JSON.stringify(value))
-                )).join(' '));
+                const at = Date.now();
+                const text = consoleText(args);
+                writeRuntime(at, level, 'main', text);
+                if (state.consoleCaptureEnabled) panel.add(at, level, text);
             } catch { /* never let logging break the thing that logged */ }
             original(...args);
         };
@@ -310,4 +404,4 @@ const createDebugHost = ({ app, ipcMain, store, BrowserWindow }) => {
     return host;
 };
 
-module.exports = { createDebugHost, runtimeLine, migrateMemoryLogEnabled, DEFAULTS };
+module.exports = { createDebugHost, createPanelFeed, consoleText, runtimeLine, migrateMemoryLogEnabled, readFdCounts, DEFAULTS };

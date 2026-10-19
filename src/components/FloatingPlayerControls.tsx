@@ -15,6 +15,7 @@ import { usePlayerBottomBarLayoutStore } from '../stores/usePlayerBottomBarLayou
 import { usePlayerChromeSettingsStore } from '../stores/usePlayerChromeSettingsStore';
 import { PLAYER_BOTTOM_BAR_BASE_OFFSET_PX, clampPlayerBottomBarOffset, resolvePlayerBottomBarMaxOffset } from '../utils/playerBottomBarLayout';
 import type { PlayerControlSlotActionId, PlayerControlSlotContext } from './floating-player/playerControlSlotActions';
+import { usePlayerOverlayObstacle } from '../hooks/usePlayerOverlayLayout';
 
 export interface TrackNavigation {
     /** 当前曲目的稳定身份，用于识别「确实换歌了」；相邻两首同名时标题字符串不变，不能拿标题判断 */
@@ -38,6 +39,12 @@ const CONTROL_LAYOUT_SPRING = {
 const HOVER_EXPAND_DELAY_MS = 20;
 const HOVER_COLLAPSE_DELAY_MS = 100;
 const HOVER_HITBOX_BOTTOM_BUFFER_PX = 32;
+/*
+ * 模组可以通过公开变量 --folium-player-bar-extra 加宽胶囊，补回进度条两侧按钮占掉的长度。
+ * 外层 max-width 已经加了一份 extra；收起的胶囊是外层的 80% / 60%，所以只再补 (1 - 比例) 份，
+ * 外层顶到 max-width 时收起胶囊正好宽出 extra。
+ */
+const COLLAPSED_WIDTH_CLASS = 'w-[min(100%,calc(80%_+_var(--folium-player-bar-extra,0px)_*_0.2))] md:w-[min(100%,calc(60%_+_var(--folium-player-bar-extra,0px)_*_0.4))]';
 
 /**
  * 槽位上下文里由 App 提供的部分。循环模式、歌词时间轴和上一首/下一首的可用性
@@ -114,6 +121,7 @@ const FloatingPlayerControls: React.FC<FloatingPlayerControlsProps> = ({
     onCommitBottomBarOffset,
 }) => {
     const { t } = useTranslation();
+    const { ref: layoutRef, invalidate: invalidateLayout } = usePlayerOverlayObstacle('player-controls', 'playback', !isHidden);
     // const isDaylight = theme?.name === 'Daylight Default'; // Deprecated, passed as prop
     const glassBgExpanded = isDaylight ? 'bg-white/60 border border-white/20 shadow-xl' : 'bg-black/40 border border-white/5';
     const glassBgCollapsed = isDaylight ? 'bg-white/40 border border-white/20 shadow-lg hover:bg-white/50' : 'bg-black/20 border border-white/5 hover:bg-black/30';
@@ -324,11 +332,15 @@ const FloatingPlayerControls: React.FC<FloatingPlayerControlsProps> = ({
             */}
             <motion.div
                 className={`absolute left-1/2 -translate-x-1/2 z-60 w-full flex justify-center pointer-events-none
-                    ${currentView === 'home' ? 'max-w-[calc(100vw-120px)] md:max-w-lg' : 'max-w-lg px-4'}`}
+                    ${currentView === 'home'
+                        ? 'max-w-[calc(100vw-120px)] md:max-w-[min(calc(32rem_+_var(--folium-player-bar-extra,0px)),calc(100vw-120px))]'
+                        : 'max-w-[min(calc(32rem_+_var(--folium-player-bar-extra,0px)),100vw)] px-4'}`}
                 style={{ bottom: bottomBarBottomPx }}
+                onUpdate={invalidateLayout}
             >
             <motion.div
                 className="w-full flex justify-center transition-all duration-300 pointer-events-none"
+                onUpdate={invalidateLayout}
                 initial={false}
                 animate={{
                     opacity: isHidden ? 0 : 1,
@@ -351,12 +363,16 @@ const FloatingPlayerControls: React.FC<FloatingPlayerControlsProps> = ({
                     }}
                 >
                     <motion.div
+                        ref={layoutRef}
+                        onUpdate={invalidateLayout}
+                        onLayoutAnimationComplete={invalidateLayout}
                         layout
                         transition={{ layout: CONTROL_LAYOUT_SPRING }}
                         onClick={handleClick}
                         // 用原生 pointer 事件而不是 framer-motion 的 drag：位移已经由 playerBottomBarLiveOffset
                         // 经外层 lift 表达，再让 drag 往这个节点写一份 y 会叠加成两倍位移；
                         // 而且 dragConstraints 依赖的起始值放在 ref 里不会触发重渲染，读到的会是上一帧的。
+                        data-ponder="player-bar"
                         onPointerDown={handlePositionDragStart}
                         onPointerMove={handlePositionDragMove}
                         onPointerUp={handlePositionDragEnd}
@@ -364,7 +380,7 @@ const FloatingPlayerControls: React.FC<FloatingPlayerControlsProps> = ({
                         style={{ touchAction: isPositioning ? 'none' : undefined }}
                         className={`backdrop-blur-xl shadow-2xl overflow-hidden rounded-full relative transition-colors duration-300
                             ${isPositioning ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}
-                            ${showExpanded ? `p-3 ${glassBgExpanded} w-full` : `px-4 py-2 ${glassBgCollapsed} w-[80%] md:w-[60%]`}`}
+                            ${showExpanded ? `p-3 ${glassBgExpanded} w-full` : `px-4 py-2 ${glassBgCollapsed} ${COLLAPSED_WIDTH_CLASS}`}`}
                     >
                         <motion.div
                             layout
@@ -533,7 +549,10 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({
             </button>
 
             {/* 两个可自定义槽位。默认仍是循环模式 + 歌词时间轴，和改动前一致。 */}
-            <div className="contents sm:col-start-3 sm:row-start-1 sm:row-span-2 sm:flex sm:items-center sm:gap-1">
+            <div
+                data-ponder-slots
+                className="contents sm:col-start-3 sm:row-start-1 sm:row-span-2 sm:flex sm:items-center sm:gap-1"
+            >
                 <PlayerControlSlotButton
                     actionId={slotPrimary}
                     context={slotContext}
@@ -599,6 +618,7 @@ const CollapsedView: React.FC<CollapsedViewProps> = ({
                 secondaryColor={secondaryColor}
                 trackColor={trackColor}
                 disabled={controlsDisabled}
+                collapsed
             />
         </div>
     );

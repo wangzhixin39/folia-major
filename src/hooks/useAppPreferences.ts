@@ -6,12 +6,10 @@ import { getCustomCappellaAvatar } from '../services/cappellaAvatarPack';
 import { getMonetBackgroundImage } from '../services/monetBackgroundImage';
 import { getMonetPortraitImage } from '../services/monetPortraitImage';
 import { restoreUploadedLyricsFont } from '../services/customLyricsFont';
-import {
-    resolveStoredCappellaTuning,
-    resolveStoredMonetBackgroundTuning,
-    resolveStoredMonetTuning,
-    resolveVisualizerBackgroundMode,
-} from '../stores/visualizerSettingsPersistence';
+import { resolveStoredCappellaTuning } from '../components/visualizer/cappella/tuning';
+import { resolveStoredMonetBackgroundTuning } from '../components/visualizer/backgrounds/monet/tuning';
+import { resolveStoredMonetTuning } from '../components/visualizer/monet/tuning';
+import { resolveVisualizerBackgroundMode } from '../stores/visualizerSettingsPersistence';
 import i18n from '../i18n/config';
 import { setStatusMessage } from '../stores/useStatusMessageStore';
 import { createSafeObjectUrl } from '../utils/blobGuards';
@@ -152,6 +150,14 @@ export function useAppPreferences() {
             setDesktopPreferenceSnapshot(settings);
         });
     }, [setDesktopPreferenceSnapshot]);
+
+    useEffect(() => {
+        // The tray asked to enter wallpaper mode. Tray lives in the main process and cannot show
+        // the in-app dialog, so it goes through the same gated entry as the settings card.
+        return window.electron?.onWallpaperEntryRequested?.(() => {
+            useDesktopSettingsStore.getState().handleToggleWallpaperMode(true);
+        });
+    }, []);
 
     useEffect(() => {
         // Main refused a transparent-enable toggle (classic Windows wallpaper mode): the toggle
